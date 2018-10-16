@@ -8,7 +8,7 @@ from django.db.models.signals import post_delete, post_save
 from django.db import transaction
 from django.dispatch import receiver
 import os
-from ecolle.settings import MEDIA_ROOT, IMAGEMAGICK, BDD
+from ecolle.settings import MEDIA_ROOT, IMAGEMAGICK, BDD, DEFAULT_CSS, HEURE_DEBUT, HEURE_FIN, INTERVALLE
 from PIL import Image
 from django.db.models import Count, Avg, Min, Max, Sum, F, Q, StdDev
 from django.db.models.functions import Lower, Upper, Concat, Substr
@@ -429,6 +429,8 @@ class User(AbstractUser):
 	eleve = models.OneToOneField(Eleve, null=True, on_delete=models.CASCADE)
 	colleur = models.OneToOneField(Colleur, null=True, on_delete=models.CASCADE)
 
+	css = models.CharField(verbose_name="Style préféré",default=DEFAULT_CSS,null=True,blank=True,max_length=50)
+
 	def totalmessages(self):
 		return Destinataire.objects.filter(user=self).count()
 
@@ -458,7 +460,9 @@ class Semaine(models.Model):
 		return "{}:{}/{}-{}/{}".format(self.numero,self.lundi.day,self.lundi.month,samedi.day,samedi.month)
 
 class Creneau(models.Model):
-	LISTE_HEURE=[(i,"{}h{:02d}".format(i//4,15*(i%4))) for i in range(24,89)] # une heure est représentée par le nombre de 1/4 d'heure depuis 0h00. entre 6h et 22h
+	LISTE_HEURE=[(i,"{}h{:02d}".format(i//60,(i%60))) for i in range(HEURE_DEBUT,HEURE_FIN,INTERVALLE)] 
+        # une heure est représentée par le nombre de minutes depuis
+        # minuit
 	LISTE_JOUR=enumerate(["lundi","mardi","mercredi","jeudi","vendredi","samedi"])
 	jour = models.PositiveSmallIntegerField(choices=LISTE_JOUR,default=0)
 	heure = models.PositiveSmallIntegerField(choices=LISTE_HEURE,default=24)
@@ -469,7 +473,7 @@ class Creneau(models.Model):
 		ordering=['jour','heure','salle','pk']
 
 	def __str__(self):
-		return "{}/{}/{}h{:02d}".format(self.classe.nom,semaine[self.jour],self.heure//4,15*(self.heure%4))
+		return "{}/{}/{}h{:02d}".format(self.classe.nom,semaine[self.jour],self.heure//60,(self.heure%60))
 
 class Programme(models.Model):
 	def update_name(instance, filename):
@@ -499,7 +503,7 @@ class NoteManager(models.Manager):
 			cursor.execute(requete,(colleur.pk,))
 			notes = dictfetchall(cursor)
 			return [[note["id"], note["matiere_id"], note["classe_id"], note["note"],  note["commentaire"], note["semaine"], datetime.combine(note["date_colle"],
-				time(note["heure"] // 4, 15 * (note["heure"] % 4))).replace(tzinfo=timezone.utc).timestamp(), note["eleve_id"], note["rattrapee"]] for note in notes]
+				time(note["heure"] // 4, 15 * (note["heure"] % 4))).replace(tzinfo=timezone.utc).timestamp(), note["eleve_id"], bool(note["rattrapee"])] for note in notes]
 
 	def listeNotes(self,colleur,classe,matiere):
 		requete = "SELECT n.id pk, s.numero semaine, p.titre, p.detail, n.date_colle, n.heure, u.first_name prenom, u.last_name nom, n.note, n.commentaire\
@@ -572,8 +576,7 @@ class NoteManager(models.Manager):
 				moyennes[i+1]['rang']=moyennes[i]['rang']
 		for moyenne in moyennes:
 			elevesdict[moyenne['eleve__id']][2:]=[moyenne['note__avg'],moyenne['rang']]
-		eleves = list(elevesdict.values())
-		eleves.sort(key=lambda x:(x[1],x[0]))
+		eleves = [elevesdict[eleve.pk] for eleve in listeEleves] 
 		for elevemoy,eleve in zip(eleves,listeEleves):
 			note=dict()
 			note['eleve']=eleve
@@ -633,7 +636,7 @@ class NoteManager(models.Manager):
 
 class Note(models.Model):
 	LISTE_JOUR=enumerate(["lundi","mardi","mercredi","jeudi","vendredi","samedi"])
-	LISTE_HEURE=[(i,"{}h{:02d}".format(i//4,15*(i%4))) for i in range(24,89)]
+	LISTE_HEURE=[(i,"{}h{:02d}".format(i//60,(i%60))) for i in range(HEURE_DEBUT,HEURE_FIN,INTERVALLE)] 
 	LISTE_NOTE=[(21,"n.n"),(22,"Abs")]
 	LISTE_NOTE.extend(zip(range(21),range(21)))
 	colleur = models.ForeignKey(Colleur,on_delete=models.PROTECT)
@@ -836,7 +839,7 @@ def mois():
 		moisMax=Semaine.objects.aggregate(Max('lundi'))
 		moisMin=date(moisMin['lundi__min'].year,moisMin['lundi__min'].month,1)
 		moisMax=moisMax['lundi__max']+timedelta(days=5)
-		moisMax=date(moisMax.year+moisMax.month//12,moisMax.month+1,1)-timedelta(days=1)
+		moisMax=date(moisMax.year+moisMax.month//12,moisMax.month%12+1,1)-timedelta(days=1)
 	except Exception:
 		hui=date.today()
 		moisMin=moisMax=date(hui.year,hui.month,1)
